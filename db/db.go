@@ -65,80 +65,163 @@ func btoi(b []byte) uint64 {
 	return binary.BigEndian.Uint64(b)
 }
 
+type tx struct {
+	t   *bolt.Tx
+	err error
+}
+
+type bucket struct {
+	b *bolt.Bucket
+	t *tx
+}
+
+func (b *bucket) Delete(k []byte) {
+	if b.t.err != nil {
+		return
+	}
+	b.t.err = b.b.Delete(k)
+}
+
+func (t *tx) Bucket(n []byte) *bucket {
+	if t.err != nil {
+		return nil
+	}
+
+	b := t.t.Bucket(n)
+	if b == nil {
+		return nil
+	}
+	return &bucket{b: b, t: t}
+}
+
+func (t *tx) CreateBucketIfNotExists(n []byte) *bucket {
+	b := &bucket{t: t}
+	if t.err != nil {
+		return b
+	}
+
+	bk, err := t.t.CreateBucketIfNotExists(n)
+	t.err = err
+	if err != nil {
+		return b
+	}
+	b.b = bk
+	return b
+}
+
+func (b *bucket) Bucket(n []byte) *bucket {
+	if b.t.err != nil {
+		return nil
+	}
+
+	bk := b.b.Bucket(n)
+	if bk == nil {
+		return nil
+	}
+	return &bucket{b: bk, t: b.t}
+}
+
+func (b *bucket) Cursor() *bolt.Cursor {
+	return b.b.Cursor()
+}
+
+func (b *bucket) Get(k []byte) []byte {
+	return b.b.Get(k)
+}
+
+func (b *bucket) CreateBucketIfNotExists(n []byte) *bucket {
+	bkt := &bucket{t: b.t}
+	if b.t.err != nil {
+		return bkt
+	}
+
+	bk, err := b.b.CreateBucketIfNotExists(n)
+	b.t.err = err
+	if err != nil {
+		return b
+	}
+	bkt.b = bk
+	return bkt
+}
+
+func (b *bucket) NextSequence() uint64 {
+	if b.t.err != nil {
+		return 0
+	}
+	n, err := b.b.NextSequence()
+	b.t.err = err
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+func (b *bucket) Put(k []byte, v []byte) {
+	if b.t.err != nil {
+		return
+	}
+	err := b.b.Put(k, v)
+	b.t.err = err
+}
+
+func dispatch(f func(*tx) error, t *bolt.Tx) error {
+	tt := &tx{t: t}
+	err := f(tt)
+	// need to return tt.err if both tt.err and err are not nil
+	if tt.err != nil {
+		return tt.err
+	}
+	return err
+}
+
+func (d *DB) update(f func(t *tx) error) error {
+	return d.db.Update(func(t *bolt.Tx) error {
+		return dispatch(f, t)
+	})
+}
+
+func (d *DB) view(f func(t *tx) error) error {
+	return d.db.View(func(t *bolt.Tx) error {
+		return dispatch(f, t)
+	})
+}
+
 // CreateBuild creats a build event
 func (d *DB) CreateBuild(t BuildType, cloneURL, ref, commitSHA string) (Build, error) {
 	build := Build{T: t, CloneURL: cloneURL, Ref: ref, CommitSHA: commitSHA}
 	var buildID uint64
-	err := d.db.Update(func(tx *bolt.Tx) error {
-		b, err := tx.CreateBucketIfNotExists(buildBucket)
-		if err != nil {
-			return err
+	err := d.update(func(tx *tx) error {
+		b := tx.CreateBucketIfNotExists(buildBucket)
+		buildID = b.NextSequence()
+		if tx.err != nil {
+			return tx.err
 		}
-		buildID, err = b.NextSequence()
-		if err != nil {
-			return err
-		}
+
 		build.ID = buildID
 		var buf bytes.Buffer
 		enc := gob.NewEncoder(&buf)
-		err = enc.Encode(build)
+		err := enc.Encode(build)
 		if err != nil {
 			return err
 		}
-		err = b.Put(itob(buildID), buf.Bytes())
-		if err != nil {
-			return err
-		}
-
-		b, err = tx.CreateBucketIfNotExists(shaBucket)
-		if err != nil {
-			return err
-		}
-		b, err = b.CreateBucketIfNotExists([]byte(build.CommitSHA))
-		if err != nil {
-			return err
-		}
-		commitID, err := b.NextSequence()
-		if err != nil {
-			return err
-		}
-		err = b.Put(itob(commitID), itob(build.ID))
-		if err != nil {
-			return err
-		}
-
-		b, err = tx.CreateBucketIfNotExists(refBucket)
-		if err != nil {
-			return err
-		}
-		b, err = b.CreateBucketIfNotExists(itob(uint64(build.T)))
-		if err != nil {
-			return err
-		}
-		b, err = b.CreateBucketIfNotExists([]byte(build.Ref))
-		if err != nil {
-			return err
-		}
-		refID, err := b.NextSequence()
-		if err != nil {
-			return err
-		}
-		err = b.Put(itob(refID), itob(build.ID))
-		if err != nil {
-			return err
-		}
-
-		b, err = tx.CreateBucketIfNotExists(pendingBucket)
-		if err != nil {
-			return err
-		}
-		err = b.Put(itob(buildID), make([]byte, 0))
-		return err
+		b.Put(itob(buildID), buf.Bytes())
+		tx.CreateBucketIfNotExists(shaBucket)
+		b.CreateBucketIfNotExists([]byte(build.CommitSHA))
+		commitID := b.NextSequence()
+		b.Put(itob(commitID), itob(build.ID))
+		b = tx.CreateBucketIfNotExists(refBucket)
+		b = b.CreateBucketIfNotExists(itob(uint64(build.T)))
+		b = b.CreateBucketIfNotExists([]byte(build.Ref))
+		refID := b.NextSequence()
+		b.Put(itob(refID), itob(build.ID))
+		b = tx.CreateBucketIfNotExists(pendingBucket)
+		b.Put(itob(buildID), make([]byte, 0))
+		return nil
 	})
 	if err != nil {
 		return Build{}, err
 	}
-	build.db = d.db
+	build.db = d
 	return build, err
 }
 
@@ -163,7 +246,7 @@ func (d *DB) Build(id uint64) (Build, error) {
 	if err != nil {
 		return Build{}, err
 	}
-	build.db = d.db
+	build.db = d
 	return build, nil
 }
 
