@@ -68,6 +68,10 @@ func main() {
 			b, err := d.CreateBuild(db.Push, e.Repository.CloneURL, e.Ref, e.HeadCommit.ID)
 			if err != nil {
 				log.Println(err, e)
+				err = github.CreateStatus(e.HeadCommit.ID, GithubFailure)
+				if err != nil {
+					log.Println(err)
+				}
 				continue
 			}
 			b.SetStatus(db.BuildQueued)
@@ -81,8 +85,13 @@ func main() {
 			b, err := d.CreateBuild(db.PullRequest, e.Repository.CloneURL, e.PullRequest.Head.Ref, e.PullRequest.Head.Sha)
 			if err != nil {
 				log.Println(err, e)
+				err = github.CreateStatus(e.PullRequest.Head.Sha, GithubFailure)
+				if err != nil {
+					log.Println(err)
+				}
 				continue
 			}
+
 			b.SetStatus(db.BuildQueued)
 			go func(b db.Build) {
 				buildChan <- b
