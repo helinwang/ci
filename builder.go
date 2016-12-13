@@ -126,7 +126,7 @@ func run(cmd *exec.Cmd) ([]db.OutputLine, error) {
 	<-waitOut
 	<-waitErr
 	if err = cmd.Wait(); err != nil {
-		return nil, err
+		return output, err
 	}
 	return output, nil
 }
