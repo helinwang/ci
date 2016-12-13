@@ -23,13 +23,13 @@ type PullRequestEvent struct {
 	PullRequest struct {
 		ID   int `json:"id"`
 		Head struct {
-			Sha string `json:"sha"`
-			Ref string `json:"ref"`
+			Sha  string `json:"sha"`
+			Ref  string `json:"ref"`
+			Repo struct {
+				CloneURL string `json:"clone_url"`
+			} `json:"repo"`
 		} `json:"head"`
 	} `json:"pull_request"`
-	Repository struct {
-		CloneURL string `json:"clone_url"`
-	} `json:"repository"`
 }
 
 // Receiver receives webhook events

@@ -82,7 +82,7 @@ func main() {
 			if e.Action != "opened" && e.Action != "synchronize" {
 				continue
 			}
-			b, err := d.CreateBuild(db.PullRequest, e.Repository.CloneURL, e.PullRequest.Head.Ref, e.PullRequest.Head.Sha)
+			b, err := d.CreateBuild(db.PullRequest, e.PullRequest.Head.Repo.CloneURL, e.PullRequest.Head.Ref, e.PullRequest.Head.Sha)
 			if err != nil {
 				log.Println(err, e)
 				err = github.CreateStatus(e.PullRequest.Head.Sha, GithubFailure)
